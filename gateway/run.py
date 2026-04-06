@@ -6462,17 +6462,24 @@ class GatewayRunner:
                 except Exception as _e:
                     logger.error("Failed to send approval request: %s", _e)
 
-            # Prepend pending model switch note so the model knows about the switch
+            # Avoid rebinding the outer parameter directly here: assigning to
+            # `message` inside this nested function would make it a local and
+            # trigger UnboundLocalError when we try to read it first.
+            effective_message = message
             _pending_notes = getattr(self, '_pending_model_notes', {})
             _msn = _pending_notes.pop(session_key, None) if session_key else None
             if _msn:
-                message = _msn + "\n\n" + message
+                effective_message = _msn + "\n\n" + effective_message
 
             _approval_session_key = session_key or ""
             _approval_session_token = set_current_session_key(_approval_session_key)
             register_gateway_notify(_approval_session_key, _approval_notify_sync)
             try:
-                result = agent.run_conversation(message, conversation_history=agent_history, task_id=session_id)
+                result = agent.run_conversation(
+                    effective_message,
+                    conversation_history=agent_history,
+                    task_id=session_id,
+                )
             finally:
                 unregister_gateway_notify(_approval_session_key)
                 reset_current_session_key(_approval_session_token)

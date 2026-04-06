@@ -49,12 +49,14 @@ class _CapturingAgent:
     """Fake agent that records init kwargs for assertions."""
 
     last_init = None
+    last_user_message = None
 
     def __init__(self, *args, **kwargs):
         type(self).last_init = dict(kwargs)
         self.tools = []
 
     def run_conversation(self, user_message: str, conversation_history=None, task_id=None):
+        type(self).last_user_message = user_message
         return {
             "final_response": "ok",
             "messages": [],
@@ -327,3 +329,60 @@ class TestReasoningCommand:
         assert result["final_response"] == "ok"
         assert _CapturingAgent.last_init is not None
         assert "homeassistant" in set(_CapturingAgent.last_init["enabled_toolsets"])
+
+    def test_run_agent_prepends_pending_model_note_without_scoping_error(
+        self, tmp_path, monkeypatch
+    ):
+        hermes_home = tmp_path / "hermes"
+        hermes_home.mkdir()
+        (hermes_home / "config.yaml").write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+        monkeypatch.setattr(gateway_run, "_env_path", hermes_home / ".env")
+        monkeypatch.setattr(gateway_run, "load_dotenv", lambda *args, **kwargs: None)
+        monkeypatch.setattr(
+            gateway_run,
+            "_resolve_runtime_agent_kwargs",
+            lambda: {
+                "provider": "openrouter",
+                "api_mode": "chat_completions",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key": "test-key",
+            },
+        )
+        fake_run_agent = types.ModuleType("run_agent")
+        fake_run_agent.AIAgent = _CapturingAgent
+        monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+
+        _CapturingAgent.last_init = None
+        _CapturingAgent.last_user_message = None
+
+        runner = _make_runner()
+        session_key = "agent:main:local:dm"
+        runner._pending_model_notes = {session_key: "[Model switched to gemma-3-27b-it]"}
+
+        source = SessionSource(
+            platform=Platform.LOCAL,
+            chat_id="cli",
+            chat_name="CLI",
+            chat_type="dm",
+            user_id="user-1",
+        )
+
+        result = asyncio.run(
+            runner._run_agent(
+                message="ping",
+                context_prompt="",
+                history=[],
+                source=source,
+                session_id="session-1",
+                session_key=session_key,
+            )
+        )
+
+        assert result["final_response"] == "ok"
+        assert (
+            _CapturingAgent.last_user_message
+            == "[Model switched to gemma-3-27b-it]\n\nping"
+        )
+        assert runner._pending_model_notes == {}
