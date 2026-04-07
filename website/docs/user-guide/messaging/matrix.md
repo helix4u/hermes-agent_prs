@@ -62,6 +62,7 @@ matrix:
   free_response_rooms:            # Rooms exempt from mention requirement
     - "!abc123:matrix.org"
   auto_thread: true               # Auto-create threads for responses (default: true)
+  rich_formatting: true           # Send Matrix formatted_body HTML (default: true)
 ```
 
 Or via environment variables:
@@ -70,6 +71,7 @@ Or via environment variables:
 MATRIX_REQUIRE_MENTION=true
 MATRIX_FREE_RESPONSE_ROOMS=!abc123:matrix.org,!def456:matrix.org
 MATRIX_AUTO_THREAD=true
+MATRIX_RICH_FORMATTING=true
 ```
 
 :::note
@@ -208,9 +210,17 @@ Optional behavior settings in `~/.hermes/config.yaml`:
 
 ```yaml
 group_sessions_per_user: true
+
+matrix:
+  rich_formatting: true
 ```
 
 - `group_sessions_per_user: true` keeps each participant's context isolated inside shared rooms
+- `matrix.rich_formatting: false` disables Matrix `formatted_body` HTML and sends plain text only
+
+:::tip
+If Element Mobile is rendering Hermes messages with odd spacing, floating bullets, or broken heading text, try setting `matrix.rich_formatting: false` or `MATRIX_RICH_FORMATTING=false` and restart the gateway.
+:::
 
 ### Start the Gateway
 

@@ -15,6 +15,8 @@ Environment variables:
     MATRIX_HOME_ROOM        Room ID for cron/notification delivery
     MATRIX_REACTIONS        Set "false" to disable processing lifecycle reactions
                             (eyes/checkmark/cross). Default: true
+    MATRIX_RICH_FORMATTING  Set "false" to disable Matrix formatted_body HTML
+                            and send plain text only. Default: true
     MATRIX_REQUIRE_MENTION      Require @mention in rooms (default: true)
     MATRIX_FREE_RESPONSE_ROOMS  Comma-separated room IDs exempt from mention requirement
     MATRIX_AUTO_THREAD          Auto-create threads for room messages (default: true)
@@ -170,6 +172,9 @@ class MatrixAdapter(BasePlatformAdapter):
         # Reactions: configurable via MATRIX_REACTIONS (default: true).
         self._reactions_enabled: bool = os.getenv(
             "MATRIX_REACTIONS", "true"
+        ).lower() not in ("false", "0", "no")
+        self._rich_formatting_enabled: bool = os.getenv(
+            "MATRIX_RICH_FORMATTING", "true"
         ).lower() not in ("false", "0", "no")
 
     def _is_duplicate_event(self, event_id) -> bool:
@@ -442,11 +447,7 @@ class MatrixAdapter(BasePlatformAdapter):
                 "body": chunk,
             }
 
-            # Convert markdown to HTML for rich rendering.
-            html = self._markdown_to_html(chunk)
-            if html and html != chunk:
-                msg_content["format"] = "org.matrix.custom.html"
-                msg_content["formatted_body"] = html
+            self._apply_rich_formatting(msg_content, chunk)
 
             # Reply-to support.
             if reply_to:
@@ -565,12 +566,13 @@ class MatrixAdapter(BasePlatformAdapter):
             },
         }
 
-        html = self._markdown_to_html(formatted)
-        if html and html != formatted:
-            msg_content["m.new_content"]["format"] = "org.matrix.custom.html"
-            msg_content["m.new_content"]["formatted_body"] = html
-            msg_content["format"] = "org.matrix.custom.html"
-            msg_content["formatted_body"] = f"* {html}"
+        if self._rich_formatting_enabled:
+            html = self._markdown_to_html(formatted)
+            if html and html != formatted:
+                msg_content["m.new_content"]["format"] = "org.matrix.custom.html"
+                msg_content["m.new_content"]["formatted_body"] = html
+                msg_content["format"] = "org.matrix.custom.html"
+                msg_content["formatted_body"] = f"* {html}"
 
         resp = await self._client.room_send(chat_id, "m.room.message", msg_content)
         if isinstance(resp, nio.RoomSendResponse):
@@ -1657,10 +1659,7 @@ class MatrixAdapter(BasePlatformAdapter):
             "msgtype": "m.emote",
             "body": text,
         }
-        html = self._markdown_to_html(text)
-        if html and html != text:
-            msg_content["format"] = "org.matrix.custom.html"
-            msg_content["formatted_body"] = html
+        self._apply_rich_formatting(msg_content, text)
 
         try:
             resp = await self._client.room_send(
@@ -1686,10 +1685,7 @@ class MatrixAdapter(BasePlatformAdapter):
             "msgtype": "m.notice",
             "body": text,
         }
-        html = self._markdown_to_html(text)
-        if html and html != text:
-            msg_content["format"] = "org.matrix.custom.html"
-            msg_content["formatted_body"] = html
+        self._apply_rich_formatting(msg_content, text)
 
         try:
             resp = await self._client.room_send(
@@ -1705,6 +1701,16 @@ class MatrixAdapter(BasePlatformAdapter):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _apply_rich_formatting(self, msg_content: Dict[str, Any], text: str) -> None:
+        """Attach Matrix rich HTML when enabled and the conversion changes the text."""
+        if not self._rich_formatting_enabled:
+            return
+
+        html = self._markdown_to_html(text)
+        if html and html != text:
+            msg_content["format"] = "org.matrix.custom.html"
+            msg_content["formatted_body"] = html
 
     async def _refresh_dm_cache(self) -> None:
         """Refresh the DM room cache from m.direct account data.

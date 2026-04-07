@@ -595,6 +595,8 @@ def load_gateway_config() -> GatewayConfig:
                     os.environ["MATRIX_FREE_RESPONSE_ROOMS"] = str(frc)
                 if "auto_thread" in matrix_cfg and not os.getenv("MATRIX_AUTO_THREAD"):
                     os.environ["MATRIX_AUTO_THREAD"] = str(matrix_cfg["auto_thread"]).lower()
+                if "rich_formatting" in matrix_cfg and not os.getenv("MATRIX_RICH_FORMATTING"):
+                    os.environ["MATRIX_RICH_FORMATTING"] = str(matrix_cfg["rich_formatting"]).lower()
 
     except Exception as e:
         logger.warning(

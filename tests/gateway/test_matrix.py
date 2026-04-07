@@ -1049,6 +1049,67 @@ class TestMatrixEncryptedSendFallback:
         assert second_call.kwargs.get("ignore_unverified_devices") is True
 
 
+class TestMatrixRichFormattingToggle:
+    @pytest.mark.asyncio
+    async def test_send_includes_formatted_body_by_default(self, monkeypatch):
+        monkeypatch.delenv("MATRIX_RICH_FORMATTING", raising=False)
+        adapter = _make_adapter()
+
+        fake_nio = _make_fake_nio()
+        fake_client = MagicMock()
+        fake_client.room_send = AsyncMock(return_value=fake_nio.RoomSendResponse("$event-rich"))
+        adapter._client = fake_client
+        adapter._markdown_to_html = MagicMock(return_value="<h1>hello</h1>")
+
+        with patch.dict("sys.modules", {"nio": fake_nio}):
+            result = await adapter.send("!room:example.org", "# hello")
+
+        assert result.success is True
+        sent_content = fake_client.room_send.await_args.args[2]
+        assert sent_content["format"] == "org.matrix.custom.html"
+        assert sent_content["formatted_body"] == "<h1>hello</h1>"
+
+    @pytest.mark.asyncio
+    async def test_send_omits_formatted_body_when_disabled(self, monkeypatch):
+        monkeypatch.setenv("MATRIX_RICH_FORMATTING", "false")
+        adapter = _make_adapter()
+
+        fake_nio = _make_fake_nio()
+        fake_client = MagicMock()
+        fake_client.room_send = AsyncMock(return_value=fake_nio.RoomSendResponse("$event-plain"))
+        adapter._client = fake_client
+        adapter._markdown_to_html = MagicMock(return_value="<h1>hello</h1>")
+
+        with patch.dict("sys.modules", {"nio": fake_nio}):
+            result = await adapter.send("!room:example.org", "# hello")
+
+        assert result.success is True
+        sent_content = fake_client.room_send.await_args.args[2]
+        assert "format" not in sent_content
+        assert "formatted_body" not in sent_content
+
+    @pytest.mark.asyncio
+    async def test_edit_message_omits_formatted_body_when_disabled(self, monkeypatch):
+        monkeypatch.setenv("MATRIX_RICH_FORMATTING", "false")
+        adapter = _make_adapter()
+
+        fake_nio = _make_fake_nio()
+        fake_client = MagicMock()
+        fake_client.room_send = AsyncMock(return_value=fake_nio.RoomSendResponse("$edit-plain"))
+        adapter._client = fake_client
+        adapter._markdown_to_html = MagicMock(return_value="<h1>hello</h1>")
+
+        with patch.dict("sys.modules", {"nio": fake_nio}):
+            result = await adapter.edit_message("!room:example.org", "$msg1", "# hello")
+
+        assert result.success is True
+        sent_content = fake_client.room_send.await_args.args[2]
+        assert "format" not in sent_content
+        assert "formatted_body" not in sent_content
+        assert "format" not in sent_content["m.new_content"]
+        assert "formatted_body" not in sent_content["m.new_content"]
+
+
 # ---------------------------------------------------------------------------
 # E2EE: Auto-trust devices
 # ---------------------------------------------------------------------------

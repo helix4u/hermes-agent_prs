@@ -446,12 +446,14 @@ class TestMatrixConfigBridge:
         monkeypatch.delenv("MATRIX_REQUIRE_MENTION", raising=False)
         monkeypatch.delenv("MATRIX_FREE_RESPONSE_ROOMS", raising=False)
         monkeypatch.delenv("MATRIX_AUTO_THREAD", raising=False)
+        monkeypatch.delenv("MATRIX_RICH_FORMATTING", raising=False)
 
         yaml_content = {
             "matrix": {
                 "require_mention": False,
                 "free_response_rooms": ["!room1:example.org", "!room2:example.org"],
                 "auto_thread": False,
+                "rich_formatting": False,
             }
         }
 
@@ -474,10 +476,13 @@ class TestMatrixConfigBridge:
                 monkeypatch.setenv("MATRIX_FREE_RESPONSE_ROOMS", str(frc))
             if "auto_thread" in matrix_cfg and not os.getenv("MATRIX_AUTO_THREAD"):
                 monkeypatch.setenv("MATRIX_AUTO_THREAD", str(matrix_cfg["auto_thread"]).lower())
+            if "rich_formatting" in matrix_cfg and not os.getenv("MATRIX_RICH_FORMATTING"):
+                monkeypatch.setenv("MATRIX_RICH_FORMATTING", str(matrix_cfg["rich_formatting"]).lower())
 
         assert os.getenv("MATRIX_REQUIRE_MENTION") == "false"
         assert os.getenv("MATRIX_FREE_RESPONSE_ROOMS") == "!room1:example.org,!room2:example.org"
         assert os.getenv("MATRIX_AUTO_THREAD") == "false"
+        assert os.getenv("MATRIX_RICH_FORMATTING") == "false"
 
     def test_env_vars_take_precedence_over_yaml(self, monkeypatch):
         """Env vars should not be overwritten by YAML values."""
