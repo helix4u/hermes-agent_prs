@@ -109,6 +109,9 @@ hermes chat -q "Hello"
 pytest tests/ -v
 ```
 
+If you want parallelism locally, opt into it explicitly with a small worker count, for example
+`pytest tests/ -v -n 2`. Do not rely on automatic worker selection in WSL or on smaller machines.
+
 ---
 
 ## Project Structure
