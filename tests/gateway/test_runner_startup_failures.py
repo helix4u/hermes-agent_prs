@@ -87,3 +87,23 @@ async def test_runner_allows_cron_only_mode_when_no_platforms_are_enabled(monkey
     assert runner.adapters == {}
     state = read_runtime_status()
     assert state["gateway_state"] == "running"
+
+
+def test_runner_warns_when_docker_gateway_lacks_explicit_output_mount(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    monkeypatch.setenv("TERMINAL_DOCKER_VOLUMES", '["/etc/localtime:/etc/localtime:ro"]')
+    config = GatewayConfig(
+        platforms={
+            Platform.TELEGRAM: PlatformConfig(enabled=True, token="***")
+        },
+        sessions_dir=tmp_path / "sessions",
+    )
+
+    with caplog.at_level("WARNING"):
+        GatewayRunner(config)
+
+    assert any(
+        "host-visible output mount" in record.message
+        for record in caplog.records
+    )
