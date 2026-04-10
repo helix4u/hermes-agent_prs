@@ -980,6 +980,83 @@ class TestMatrixE2EEMaintenance:
             {"@alice:example.org": ["DEVICE1"]}
         )
 
+    @pytest.mark.asyncio
+    async def test_maintenance_bootstraps_encrypted_room_members_before_key_work(self):
+        adapter = _make_adapter()
+        adapter._encryption = True
+
+        encrypted_room = MagicMock()
+        encrypted_room.encrypted = True
+        encrypted_room.members_synced = False
+
+        fake_client = MagicMock()
+        fake_client.olm = object()
+        fake_client.rooms = {"!room:example.org": encrypted_room}
+        fake_client.send_to_device_messages = AsyncMock(return_value=[])
+        fake_client.keys_upload = AsyncMock()
+        fake_client.keys_query = AsyncMock()
+        fake_client.keys_claim = AsyncMock()
+        fake_client.should_upload_keys = False
+        fake_client.should_query_keys = False
+        fake_client.should_claim_keys = False
+        fake_client.get_users_for_key_claiming = MagicMock(return_value={})
+        fake_client.get_missing_sessions = MagicMock(return_value={})
+
+        async def _joined_members(room_id):
+            assert room_id == "!room:example.org"
+            encrypted_room.members_synced = True
+            fake_client.should_query_keys = True
+            return MagicMock()
+
+        fake_client.joined_members = AsyncMock(side_effect=_joined_members)
+        adapter._client = fake_client
+        adapter._auto_trust_devices = MagicMock()
+
+        await adapter._run_e2ee_maintenance()
+
+        fake_client.joined_members.assert_awaited_once_with("!room:example.org")
+        fake_client.keys_query.assert_awaited_once()
+        adapter._auto_trust_devices.assert_called_once()
+        assert adapter._e2ee_bootstrap_complete is True
+
+    @pytest.mark.asyncio
+    async def test_maintenance_claims_missing_sessions_even_when_should_claim_false(self):
+        adapter = _make_adapter()
+        adapter._encryption = True
+        adapter._e2ee_bootstrap_complete = True
+
+        encrypted_room = MagicMock()
+        encrypted_room.encrypted = True
+        encrypted_room.members_synced = True
+
+        fake_client = MagicMock()
+        fake_client.olm = object()
+        fake_client.rooms = {"!room:example.org": encrypted_room}
+        fake_client.send_to_device_messages = AsyncMock(return_value=[])
+        fake_client.keys_upload = AsyncMock()
+        fake_client.keys_query = AsyncMock()
+        fake_client.keys_claim = AsyncMock()
+        fake_client.should_upload_keys = False
+        fake_client.should_query_keys = False
+        fake_client.should_claim_keys = False
+        fake_client.get_users_for_key_claiming = MagicMock(return_value={})
+        fake_client.get_missing_sessions = MagicMock(
+            return_value={"@alice:example.org": ["DEVICE1", "DEVICE2"]}
+        )
+        fake_client.joined_members = AsyncMock()
+
+        adapter._client = fake_client
+        adapter._pending_megolm = [(MagicMock(), MagicMock(), 0.0)]
+        adapter._retry_pending_decryptions = AsyncMock()
+
+        await adapter._run_e2ee_maintenance()
+
+        fake_client.get_missing_sessions.assert_called_once_with("!room:example.org")
+        fake_client.keys_claim.assert_awaited_once_with(
+            {"@alice:example.org": ["DEVICE1", "DEVICE2"]}
+        )
+        adapter._retry_pending_decryptions.assert_awaited_once()
+
 
 class TestMatrixEncryptedSendFallback:
     @pytest.mark.asyncio

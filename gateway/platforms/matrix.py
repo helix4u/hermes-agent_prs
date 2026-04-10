@@ -168,6 +168,7 @@ class MatrixAdapter(BasePlatformAdapter):
         # Buffer for undecrypted events pending key receipt.
         # Each entry: (room, event, timestamp)
         self._pending_megolm: list = []
+        self._e2ee_bootstrap_complete = False
 
         # Thread participation tracking (for require_mention bypass)
         self._bot_participated_threads: set = self._load_participated_threads()
@@ -821,6 +822,98 @@ class MatrixAdapter(BasePlatformAdapter):
                 logger.warning("Matrix: sync error: %s — retrying in 5s", exc)
                 await asyncio.sleep(5)
 
+    def _get_encrypted_room_ids(self) -> list[str]:
+        """Return joined encrypted room IDs known to the client."""
+        client = self._client
+        if not client:
+            return []
+
+        rooms = getattr(client, "rooms", {}) or {}
+        encrypted: list[str] = []
+        for room_id, room in rooms.items():
+            if getattr(room, "encrypted", False):
+                encrypted.append(room_id)
+        return encrypted
+
+    async def _bootstrap_e2ee_rooms(self) -> bool:
+        """Ensure encrypted room membership is synced at least once.
+
+        matrix-nio's key-query / key-claim flags are downstream of room/member
+        state. On a fresh bot device, we may know about an encrypted room but
+        still not have fully synced members, device keys, or claimable missing
+        sessions. A one-time joined_members bootstrap helps seed that state.
+
+        Returns True if all encrypted rooms are now members-synced (or there
+        were no encrypted rooms), False if any bootstrap request failed.
+        """
+        client = self._client
+        if not client:
+            return False
+
+        encrypted_room_ids = self._get_encrypted_room_ids()
+        if not encrypted_room_ids:
+            return True
+
+        all_synced = True
+        for room_id in encrypted_room_ids:
+            room = getattr(client, "rooms", {}).get(room_id)
+            if room is None:
+                continue
+            if getattr(room, "members_synced", False):
+                continue
+            try:
+                await client.joined_members(room_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Matrix: failed to sync joined members for encrypted room %s: %s",
+                    room_id,
+                    exc,
+                )
+                all_synced = False
+                continue
+
+            # Test doubles may not mutate room.members_synced automatically.
+            if not getattr(room, "members_synced", False):
+                try:
+                    room.members_synced = True
+                except Exception:
+                    pass
+
+        return all_synced
+
+    def _get_missing_session_claims(self) -> dict[str, list[str]]:
+        """Collect missing Olm sessions across encrypted rooms."""
+        client = self._client
+        if not client:
+            return {}
+
+        claims: dict[str, list[str]] = {}
+        for room_id in self._get_encrypted_room_ids():
+            room = getattr(client, "rooms", {}).get(room_id)
+            if room is None or not getattr(room, "members_synced", False):
+                continue
+            try:
+                missing = client.get_missing_sessions(room_id)
+            except Exception as exc:
+                logger.debug(
+                    "Matrix: could not compute missing sessions for %s: %s",
+                    room_id,
+                    exc,
+                )
+                continue
+
+            for user_id, device_ids in (missing or {}).items():
+                if not device_ids:
+                    continue
+                bucket = claims.setdefault(user_id, [])
+                for device_id in device_ids:
+                    if device_id not in bucket:
+                        bucket.append(device_id)
+
+        return claims
+
     async def _run_e2ee_maintenance(self) -> None:
         """Run matrix-nio E2EE housekeeping between syncs.
 
@@ -835,20 +928,15 @@ class MatrixAdapter(BasePlatformAdapter):
         if not client or not self._encryption or not getattr(client, "olm", None):
             return
 
-        did_query_keys = client.should_query_keys
-
         tasks = [asyncio.create_task(client.send_to_device_messages())]
 
         if client.should_upload_keys:
             tasks.append(asyncio.create_task(client.keys_upload()))
-
-        if did_query_keys:
-            tasks.append(asyncio.create_task(client.keys_query()))
-
-        if client.should_claim_keys:
-            users = client.get_users_for_key_claiming()
-            if users:
-                tasks.append(asyncio.create_task(client.keys_claim(users)))
+        bootstrap_requested = (not self._e2ee_bootstrap_complete) or bool(self._pending_megolm)
+        if bootstrap_requested:
+            bootstrap_ok = await self._bootstrap_e2ee_rooms()
+            if bootstrap_ok:
+                self._e2ee_bootstrap_complete = True
 
         for task in asyncio.as_completed(tasks):
             try:
@@ -857,6 +945,33 @@ class MatrixAdapter(BasePlatformAdapter):
                 raise
             except Exception as exc:
                 logger.warning("Matrix: E2EE maintenance task failed: %s", exc)
+
+        did_query_keys = bool(client.should_query_keys)
+        if did_query_keys:
+            try:
+                await client.keys_query()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Matrix: E2EE key query failed: %s", exc)
+                did_query_keys = False
+
+        claim_users: dict[str, list[str]] = {}
+        if client.should_claim_keys:
+            try:
+                claim_users = client.get_users_for_key_claiming()
+            except Exception as exc:
+                logger.warning("Matrix: E2EE key-claim planning failed: %s", exc)
+        elif bootstrap_requested or did_query_keys or self._pending_megolm:
+            claim_users = self._get_missing_session_claims()
+
+        if claim_users:
+            try:
+                await client.keys_claim(claim_users)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Matrix: E2EE key claim failed: %s", exc)
 
         # After key queries, auto-trust all devices so senders share keys with
         # us.  For a bot this is the right default — we want to decrypt
