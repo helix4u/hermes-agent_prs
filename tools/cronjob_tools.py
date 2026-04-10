@@ -192,6 +192,7 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
         "schedule": job.get("schedule_display"),
         "repeat": _repeat_display(job),
         "deliver": job.get("deliver", "local"),
+        "into_history": bool(job.get("into_history", False)),
         "next_run_at": job.get("next_run_at"),
         "last_run_at": job.get("last_run_at"),
         "last_status": job.get("last_status"),
@@ -214,6 +215,7 @@ def cronjob(
     name: Optional[str] = None,
     repeat: Optional[int] = None,
     deliver: Optional[str] = None,
+    into_history: Optional[bool] = None,
     include_disabled: bool = False,
     skill: Optional[str] = None,
     skills: Optional[List[str]] = None,
@@ -253,6 +255,7 @@ def cronjob(
                 name=name,
                 repeat=repeat,
                 deliver=deliver,
+                into_history=bool(into_history),
                 origin=_origin_from_env(),
                 skills=canonical_skills,
                 model=_normalize_optional_job_value(model),
@@ -270,6 +273,7 @@ def cronjob(
                     "schedule": job["schedule_display"],
                     "repeat": _repeat_display(job),
                     "deliver": job.get("deliver", "local"),
+                    "into_history": bool(job.get("into_history", False)),
                     "next_run_at": job["next_run_at"],
                     "job": _format_job(job),
                     "message": f"Cron job '{job['name']}' created.",
@@ -331,6 +335,8 @@ def cronjob(
                 updates["name"] = name
             if deliver is not None:
                 updates["deliver"] = deliver
+            if into_history is not None:
+                updates["into_history"] = bool(into_history)
             if skills is not None or skill is not None:
                 canonical_skills = _canonical_skills(skill, skills)
                 updates["skills"] = canonical_skills
@@ -457,6 +463,10 @@ Important safety rule: cron-run sessions should not recursively schedule more cr
                 "type": "string",
                 "description": "Delivery target: origin, local, telegram, discord, slack, whatsapp, signal, weixin, matrix, mattermost, homeassistant, dingtalk, feishu, wecom, email, sms, bluebubbles, or platform:chat_id or platform:chat_id:thread_id for Telegram topics. Examples: 'origin', 'local', 'telegram', 'telegram:-1001234567890:17585', 'discord:#engineering'"
             },
+            "into_history": {
+                "type": "boolean",
+                "description": "Optional. When true, also mirror the delivered cron output into the target gateway conversation history so future turns in that chat can see it. Default false."
+            },
             "skills": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -517,6 +527,7 @@ registry.register(
         name=args.get("name"),
         repeat=args.get("repeat"),
         deliver=args.get("deliver"),
+        into_history=args.get("into_history"),
         include_disabled=args.get("include_disabled", True),
         skill=args.get("skill"),
         skills=args.get("skills"),
