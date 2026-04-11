@@ -644,37 +644,6 @@ class APIServerAdapter(BasePlatformAdapter):
                 if delta is not None:
                     _stream_q.put(delta)
 
-            def _on_tool_progress(event_type, name, preview, args, **kwargs):
-                """Send tool progress as a separate SSE event.
-
-                Previously, progress markers like ``⏰ list`` were injected
-                directly into ``delta.content``.  OpenAI-compatible frontends
-                (Open WebUI, LobeChat, …) store ``delta.content`` verbatim as
-                the assistant message and send it back on subsequent requests.
-                After enough turns the model learns to *emit* the markers as
-                plain text instead of issuing real tool calls — silently
-                hallucinating tool results.  See #6972.
-
-                The fix: push a tagged tuple ``("__tool_progress__", payload)``
-                onto the stream queue.  The SSE writer emits it as a custom
-                ``event: hermes.tool.progress`` line that compliant frontends
-                can render for UX but will *not* persist into conversation
-                history.  Clients that don't understand the custom event type
-                silently ignore it per the SSE specification.
-                """
-                if event_type != "tool.started":
-                    return
-                if name.startswith("_"):
-                    return
-                from agent.display import get_tool_emoji
-                emoji = get_tool_emoji(name)
-                label = preview or name
-                _stream_q.put(("__tool_progress__", {
-                    "tool": name,
-                    "emoji": emoji,
-                    "label": label,
-                }))
-
             # Start agent in background.  agent_ref is a mutable container
             # so the SSE writer can interrupt the agent on client disconnect.
             agent_ref = [None]
@@ -684,7 +653,9 @@ class APIServerAdapter(BasePlatformAdapter):
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
                 stream_delta_callback=_on_delta,
-                tool_progress_callback=_on_tool_progress,
+                # Chat-completions streaming must stay strictly OpenAI-shaped.
+                # Structured progress belongs on /v1/runs/{run_id}/events.
+                tool_progress_callback=None,
                 agent_ref=agent_ref,
             ))
 
@@ -791,28 +762,14 @@ class APIServerAdapter(BasePlatformAdapter):
             await response.write(f"data: {json.dumps(role_chunk)}\n\n".encode())
             last_activity = time.monotonic()
 
-            # Helper — route a queue item to the correct SSE event.
+            # Helper — emit a normal OpenAI chat delta chunk.
             async def _emit(item):
-                """Write a single queue item to the SSE stream.
-
-                Plain strings are sent as normal ``delta.content`` chunks.
-                Tagged tuples ``("__tool_progress__", payload)`` are sent
-                as a custom ``event: hermes.tool.progress`` SSE event so
-                frontends can display them without storing the markers in
-                conversation history.  See #6972.
-                """
-                if isinstance(item, tuple) and len(item) == 2 and item[0] == "__tool_progress__":
-                    event_data = json.dumps(item[1])
-                    await response.write(
-                        f"event: hermes.tool.progress\ndata: {event_data}\n\n".encode()
-                    )
-                else:
-                    content_chunk = {
-                        "id": completion_id, "object": "chat.completion.chunk",
-                        "created": created, "model": model,
-                        "choices": [{"index": 0, "delta": {"content": item}, "finish_reason": None}],
-                    }
-                    await response.write(f"data: {json.dumps(content_chunk)}\n\n".encode())
+                content_chunk = {
+                    "id": completion_id, "object": "chat.completion.chunk",
+                    "created": created, "model": model,
+                    "choices": [{"index": 0, "delta": {"content": item}, "finish_reason": None}],
+                }
+                await response.write(f"data: {json.dumps(content_chunk)}\n\n".encode())
                 return time.monotonic()
 
             # Stream content chunks as they arrive from the agent
