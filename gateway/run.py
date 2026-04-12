@@ -7666,7 +7666,10 @@ class GatewayRunner:
                         _consumer_cfg = StreamConsumerConfig(
                             edit_interval=_scfg.edit_interval,
                             buffer_threshold=_scfg.buffer_threshold,
-                            cursor=_scfg.cursor,
+                            # Some Matrix clients render the streaming cursor
+                            # as a visible tofu/white-box artifact. Keep
+                            # streaming text on Matrix, but suppress the cursor.
+                            cursor="" if source.platform == Platform.MATRIX else _scfg.cursor,
                         )
                         _stream_consumer = GatewayStreamConsumer(
                             adapter=_adapter,
