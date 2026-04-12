@@ -230,7 +230,7 @@ class TestThinkingCallback:
         if (content and callback and delegate_depth > 0):
             _think_text = content.strip()
             _think_text = re.sub(
-                r'</?(?:REASONING_SCRATCHPAD|think|reasoning)>', '', _think_text
+                r'</?(?:REASONING_SCRATCHPAD|think|thinking|thought|reasoning)>', '', _think_text
             ).strip()
             first_line = _think_text.split('\n')[0][:80] if _think_text else ""
             if first_line:
@@ -303,6 +303,17 @@ class TestThinkingCallback:
         assert "<think>" not in calls[0][1]
         assert "think about this problem" in calls[0][1]
 
+    def test_thinking_callback_strips_thought_tags(self):
+        """<thought> tags should be stripped before display."""
+        calls = []
+        self._simulate_thinking_callback(
+            "<thought>Keep this internal</thought>",
+            lambda name, preview=None: calls.append((name, preview))
+        )
+        assert len(calls) == 1
+        assert "<thought>" not in calls[0][1]
+        assert "Keep this internal" in calls[0][1]
+
     def test_thinking_callback_empty_after_strip(self):
         """Should not fire when content is only XML tags."""
         calls = []
@@ -371,4 +382,3 @@ class TestBatchFlush:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

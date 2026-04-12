@@ -1871,13 +1871,14 @@ class AIAgent:
         """Remove reasoning/thinking blocks from content, returning only visible text."""
         if not content:
             return ""
-        # Strip all reasoning tag variants: <think>, <thinking>, <THINKING>,
+        # Strip all reasoning tag variants: <think>, <thinking>, <thought>,
         # <reasoning>, <REASONING_SCRATCHPAD>
         content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
         content = re.sub(r'<thinking>.*?</thinking>', '', content, flags=re.DOTALL | re.IGNORECASE)
+        content = re.sub(r'<thought>.*?</thought>', '', content, flags=re.DOTALL | re.IGNORECASE)
         content = re.sub(r'<reasoning>.*?</reasoning>', '', content, flags=re.DOTALL)
         content = re.sub(r'<REASONING_SCRATCHPAD>.*?</REASONING_SCRATCHPAD>', '', content, flags=re.DOTALL)
-        content = re.sub(r'</?(?:think|thinking|reasoning|REASONING_SCRATCHPAD)>\s*', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'</?(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD)>\s*', '', content, flags=re.IGNORECASE)
         return content
 
     def _looks_like_codex_intermediate_ack(
@@ -2002,6 +2003,7 @@ class AIAgent:
             inline_patterns = (
                 r"<think>(.*?)</think>",
                 r"<thinking>(.*?)</thinking>",
+                r"<thought>(.*?)</thought>",
                 r"<reasoning>(.*?)</reasoning>",
                 r"<REASONING_SCRATCHPAD>(.*?)</REASONING_SCRATCHPAD>",
             )
@@ -8358,7 +8360,7 @@ class AIAgent:
                         # thinking-budget exhaustion.
                         _has_think_tags = bool(
                             _trunc_content and re.search(
-                                r'<(?:think|thinking|reasoning|REASONING_SCRATCHPAD)[^>]*>',
+                                r'<(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD)[^>]*>',
                                 _trunc_content,
                                 re.IGNORECASE,
                             )
@@ -9415,7 +9417,7 @@ class AIAgent:
                     _think_text = assistant_message.content.strip()
                     # Strip reasoning XML tags that shouldn't leak to parent display
                     _think_text = re.sub(
-                        r'</?(?:REASONING_SCRATCHPAD|think|reasoning)>', '', _think_text
+                        r'</?(?:REASONING_SCRATCHPAD|think|thinking|thought|reasoning)>', '', _think_text
                     ).strip()
                     # For subagents: relay first line to parent display (existing behaviour).
                     # For all agents with a structured callback: emit reasoning.available event.

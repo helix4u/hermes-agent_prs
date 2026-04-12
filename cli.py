@@ -2420,8 +2420,8 @@ class HermesCLI:
         # suppress them during streaming too — unless show_reasoning is
         # enabled, in which case we route the inner content to the
         # reasoning display box instead of discarding it.
-        _OPEN_TAGS = ("<REASONING_SCRATCHPAD>", "<think>", "<reasoning>", "<THINKING>", "<thinking>")
-        _CLOSE_TAGS = ("</REASONING_SCRATCHPAD>", "</think>", "</reasoning>", "</THINKING>", "</thinking>")
+        _OPEN_TAGS = ("<REASONING_SCRATCHPAD>", "<think>", "<reasoning>", "<thought>", "<THINKING>", "<thinking>", "<THOUGHT>")
+        _CLOSE_TAGS = ("</REASONING_SCRATCHPAD>", "</think>", "</reasoning>", "</thought>", "</THINKING>", "</thinking>", "</THOUGHT>")
 
         # Append to a pre-filter buffer first
         self._stream_prefilt = getattr(self, "_stream_prefilt", "") + text
@@ -3098,16 +3098,16 @@ class HermesCLI:
         MAX_ASST_LINES = 3           # max lines of assistant text
 
         def _strip_reasoning(text: str) -> str:
-            """Remove <REASONING_SCRATCHPAD>...</REASONING_SCRATCHPAD> blocks
+            """Remove reasoning tag blocks from displayed text
             from displayed text (reasoning model internal thoughts)."""
             import re
             cleaned = re.sub(
-                r"<REASONING_SCRATCHPAD>.*?</REASONING_SCRATCHPAD>\s*",
+                r"<(?:REASONING_SCRATCHPAD|think|thinking|thought|reasoning)>.*?</(?:REASONING_SCRATCHPAD|think|thinking|thought|reasoning)>\s*",
                 "", text, flags=re.DOTALL,
             )
             # Also strip unclosed reasoning tags at the end
             cleaned = re.sub(
-                r"<REASONING_SCRATCHPAD>.*$",
+                r"<(?:REASONING_SCRATCHPAD|think|thinking|thought|reasoning)>.*$",
                 "", cleaned, flags=re.DOTALL,
             )
             return cleaned.strip()

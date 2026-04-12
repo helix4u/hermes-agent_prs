@@ -290,6 +290,22 @@ class TestDisplayResumedHistory:
         assert "Let me think step by step" not in output
         assert "The answer is 42" in output
 
+    def test_thought_tags_stripped(self):
+        """<thought> blocks should be stripped from display."""
+        cli = _make_cli()
+        cli.conversation_history = [
+            {"role": "user", "content": "Hello"},
+            {
+                "role": "assistant",
+                "content": "<thought>Hidden reasoning</thought>\n\nVisible answer.",
+            },
+        ]
+        output = self._capture_display(cli)
+
+        assert "<thought>" not in output
+        assert "Hidden reasoning" not in output
+        assert "Visible answer." in output
+
     def test_pure_reasoning_message_skipped(self):
         """Assistant messages that are only reasoning should be skipped."""
         cli = _make_cli()

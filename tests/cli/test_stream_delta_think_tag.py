@@ -111,6 +111,19 @@ class TestRealReasoningBlock:
         cli._stream_delta("   <think>")
         assert cli._in_reasoning_block
 
+    def test_thought_at_start_of_stream(self):
+        """'<thought>reasoning</thought>answer' should suppress reasoning."""
+        cli = _make_cli_stub()
+        cli._stream_delta("<thought>")
+        assert cli._in_reasoning_block
+        cli._stream_delta("Keep this internal")
+        cli._stream_delta("</thought>")
+        assert not cli._in_reasoning_block
+        cli._stream_delta("Visible answer")
+        full = "".join(cli._emitted)
+        assert "Visible answer" in full
+        assert "Keep this internal" not in full
+
 
 class TestFlushRecovery:
     """_flush_stream should recover content from false-positive reasoning blocks."""

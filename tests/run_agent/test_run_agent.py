@@ -291,6 +291,12 @@ class TestStripThinkBlocks:
         assert "</thinking>" not in result
         assert "answer" in result
 
+    def test_thought_tag_removed(self, agent):
+        result = agent._strip_think_blocks("<thought>private chain of thought</thought>answer")
+        assert "<thought>" not in result
+        assert "private chain of thought" not in result
+        assert "answer" in result
+
     def test_orphaned_opening_think_tag(self, agent):
         result = agent._strip_think_blocks("<think>orphaned reasoning without close")
         assert "<think>" not in result
@@ -344,6 +350,7 @@ class TestExtractReasoning:
         [
             ("<think>thinking hard</think>", "thinking hard"),
             ("<thinking>step by step</thinking>", "step by step"),
+            ("<thought>quiet deliberation</thought>", "quiet deliberation"),
             (
                 "<REASONING_SCRATCHPAD>scratch analysis</REASONING_SCRATCHPAD>",
                 "scratch analysis",
