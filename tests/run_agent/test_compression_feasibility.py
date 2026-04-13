@@ -43,6 +43,11 @@ def _make_agent(
     compressor.context_length = main_context
     compressor.threshold_tokens = int(main_context * threshold_percent)
     agent.context_compressor = compressor
+    agent._config_context_length = None
+    agent._default_model = agent.model
+    agent._default_provider = agent.provider
+    agent._default_base_url = agent.base_url
+    agent._custom_provider_context_lengths = {}
 
     return agent
 
@@ -128,6 +133,34 @@ def test_feasibility_check_passes_live_main_runtime():
             "api_mode": "codex_responses",
         },
     )
+
+
+@patch("agent.model_metadata.get_model_context_length", return_value=200_000)
+@patch("agent.auxiliary_client.get_text_auxiliary_client")
+def test_feasibility_check_passes_matching_context_override_to_aux_lookup(mock_get_client, mock_ctx_len):
+    agent = _make_agent(main_context=200_000, threshold_percent=0.50)
+    agent.model = "glm-5"
+    agent.provider = "custom"
+    agent.base_url = "http://custom-endpoint.test/v1"
+    agent.api_key = ""
+    agent._default_model = "glm-5"
+    agent._default_provider = "custom"
+    agent._default_base_url = "http://custom-endpoint.test/v1"
+    agent._config_context_length = 200_000
+
+    mock_client = MagicMock()
+    mock_client.base_url = "http://custom-endpoint.test/v1"
+    mock_client.api_key = ""
+    mock_get_client.return_value = (mock_client, "glm-5")
+
+    agent._emit_status = lambda msg: None
+
+    agent._check_compression_model_feasibility()
+
+    mock_ctx_len.assert_called_once()
+    call_kwargs = mock_ctx_len.call_args.kwargs
+    assert call_kwargs["config_context_length"] == 200_000
+    assert call_kwargs["provider"] == "custom"
 
 
 @patch("agent.auxiliary_client.get_text_auxiliary_client")

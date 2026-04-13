@@ -3061,9 +3061,14 @@ class GatewayRunner:
                 from agent.model_metadata import get_model_context_length
 
                 _msg_cwd = os.environ.get("MESSAGING_CWD", os.path.expanduser("~"))
+                _msg_config_context_length = self._resolve_config_context_length_for_model(
+                    self._model,
+                    base_url=self._base_url or "",
+                )
                 _msg_ctx_len = get_model_context_length(
                     self._model,
                     base_url=self._base_url or "",
+                    config_context_length=_msg_config_context_length,
                 )
                 _ctx_result = await preprocess_context_references_async(
                     message_text,
@@ -3845,20 +3850,17 @@ class GatewayRunner:
             # Restore session context variables to their pre-handler state
             self._clear_session_env(_session_env_tokens)
     
-    def _format_session_info(self) -> str:
-        """Resolve current model config and return a formatted info block.
-
-        Surfaces model, provider, context length, and endpoint so gateway
-        users can immediately see if context detection went wrong (e.g.
-        local models falling to the 128K default).
-        """
-        from agent.model_metadata import get_model_context_length, DEFAULT_FALLBACK_CONTEXT
-
-        model = _resolve_gateway_model()
-        config_context_length = None
-        provider = None
-        base_url = None
-        api_key = None
+    def _resolve_config_context_length_for_model(
+        self,
+        model: str,
+        *,
+        base_url: str = "",
+        provider: str = "",
+    ) -> int | None:
+        """Return the configured context-length override for a specific runtime."""
+        normalized_model = model or ""
+        normalized_base_url = (base_url or "").rstrip("/")
+        normalized_provider = (provider or "").strip().lower()
 
         try:
             cfg_path = _hermes_home / "config.yaml"
@@ -3869,11 +3871,69 @@ class GatewayRunner:
                 model_cfg = data.get("model", {})
                 if isinstance(model_cfg, dict):
                     raw_ctx = model_cfg.get("context_length")
+                    configured_model = model_cfg.get("default") or ""
+                    configured_provider = (model_cfg.get("provider") or "").strip().lower()
+                    configured_base_url = (model_cfg.get("base_url") or "").rstrip("/")
                     if raw_ctx is not None:
                         try:
                             config_context_length = int(raw_ctx)
                         except (TypeError, ValueError):
-                            pass
+                            config_context_length = None
+                        else:
+                            model_matches = not configured_model or normalized_model == configured_model
+                            base_matches = not configured_base_url or not normalized_base_url or normalized_base_url == configured_base_url
+                            provider_matches = not configured_provider or not normalized_provider or normalized_provider == configured_provider
+                            if model_matches and base_matches and provider_matches:
+                                return config_context_length
+
+                custom_providers = data.get("custom_providers")
+                if isinstance(custom_providers, list) and normalized_base_url:
+                    for cp in custom_providers:
+                        if not isinstance(cp, dict):
+                            continue
+                        cp_url = (cp.get("base_url") or "").rstrip("/")
+                        if not cp_url or cp_url != normalized_base_url:
+                            continue
+                        cp_models = cp.get("models", {})
+                        if not isinstance(cp_models, dict):
+                            continue
+                        cp_model_cfg = cp_models.get(normalized_model, {})
+                        if not isinstance(cp_model_cfg, dict):
+                            continue
+                        cp_ctx = cp_model_cfg.get("context_length")
+                        if cp_ctx is None:
+                            return None
+                        try:
+                            return int(cp_ctx)
+                        except (TypeError, ValueError):
+                            return None
+        except Exception:
+            pass
+        return None
+
+    def _format_session_info(self) -> str:
+        """Resolve current model config and return a formatted info block.
+
+        Surfaces model, provider, context length, and endpoint so gateway
+        users can immediately see if context detection went wrong (e.g.
+        local models falling to the 128K default).
+        """
+        from agent.model_metadata import get_model_context_length, DEFAULT_FALLBACK_CONTEXT
+
+        model = _resolve_gateway_model()
+        provider = None
+        base_url = None
+        api_key = None
+        config_context_length = None
+
+        try:
+            cfg_path = _hermes_home / "config.yaml"
+            if cfg_path.exists():
+                import yaml as _info_yaml
+                with open(cfg_path, encoding="utf-8") as f:
+                    data = _info_yaml.safe_load(f) or {}
+                model_cfg = data.get("model", {})
+                if isinstance(model_cfg, dict):
                     provider = model_cfg.get("provider") or None
                     base_url = model_cfg.get("base_url") or None
         except Exception:
@@ -3887,6 +3947,12 @@ class GatewayRunner:
             api_key = runtime.get("api_key")
         except Exception:
             pass
+
+        config_context_length = self._resolve_config_context_length_for_model(
+            model,
+            base_url=base_url or "",
+            provider=provider or "",
+        )
 
         context_length = get_model_context_length(
             model,
@@ -4520,11 +4586,17 @@ class GatewayRunner:
         else:
             try:
                 from agent.model_metadata import get_model_context_length
+                ctx_override = self._resolve_config_context_length_for_model(
+                    result.new_model,
+                    base_url=result.base_url or current_base_url,
+                    provider=result.target_provider,
+                )
                 ctx = get_model_context_length(
                     result.new_model,
                     base_url=result.base_url or current_base_url,
                     api_key=result.api_key or current_api_key,
                     provider=result.target_provider,
+                    config_context_length=ctx_override,
                 )
                 lines.append(f"Context: {ctx:,} tokens")
             except Exception:

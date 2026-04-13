@@ -27,6 +27,58 @@ def _patch_info(tmp_path, config_yaml, model, runtime):
 
 class TestFormatSessionInfo:
 
+    def test_resolve_config_context_length_matches_default_runtime(self, runner, tmp_path):
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            "model:\n"
+            "  default: glm-5\n"
+            "  provider: custom\n"
+            "  base_url: http://custom-endpoint.test/v1\n"
+            "  context_length: 200000\n"
+        )
+        with patch("gateway.run._hermes_home", tmp_path):
+            resolved = runner._resolve_config_context_length_for_model(
+                "glm-5",
+                base_url="http://custom-endpoint.test/v1",
+                provider="custom",
+            )
+        assert resolved == 200000
+
+    def test_resolve_config_context_length_ignores_default_override_for_other_model(self, runner, tmp_path):
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            "model:\n"
+            "  default: glm-5\n"
+            "  provider: custom\n"
+            "  base_url: http://custom-endpoint.test/v1\n"
+            "  context_length: 200000\n"
+        )
+        with patch("gateway.run._hermes_home", tmp_path):
+            resolved = runner._resolve_config_context_length_for_model(
+                "other-model",
+                base_url="http://custom-endpoint.test/v1",
+                provider="custom",
+            )
+        assert resolved is None
+
+    def test_resolve_config_context_length_uses_custom_provider_model_entry(self, runner, tmp_path):
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            "custom_providers:\n"
+            "  - name: local-glm\n"
+            "    base_url: http://custom-endpoint.test/v1\n"
+            "    models:\n"
+            "      glm-5:\n"
+            "        context_length: 200000\n"
+        )
+        with patch("gateway.run._hermes_home", tmp_path):
+            resolved = runner._resolve_config_context_length_for_model(
+                "glm-5",
+                base_url="http://custom-endpoint.test/v1",
+                provider="custom",
+            )
+        assert resolved == 200000
+
     def test_includes_model_name(self, runner, tmp_path):
         p1, p2, p3 = _patch_info(tmp_path, "model:\n  default: anthropic/claude-opus-4.6\n  provider: openrouter\n",
                                   "anthropic/claude-opus-4.6",

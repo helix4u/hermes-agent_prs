@@ -1228,29 +1228,40 @@ class AIAgent:
             except (TypeError, ValueError):
                 _config_context_length = None
 
-        # Store for reuse in switch_model (so config override persists across model switches)
+        # Store the configured default runtime so later context-length lookups
+        # can apply the override only to the matching model/path.
+        self._default_model = self.model
+        self._default_provider = self.provider
+        self._default_base_url = (self.base_url or "").rstrip("/")
         self._config_context_length = _config_context_length
+        self._custom_provider_context_lengths = {}
 
-        # Check custom_providers per-model context_length
-        if _config_context_length is None:
-            _custom_providers = _agent_cfg.get("custom_providers")
-            if isinstance(_custom_providers, list):
-                for _cp_entry in _custom_providers:
-                    if not isinstance(_cp_entry, dict):
+        # Index custom_providers per-model context_length overrides.
+        _custom_providers = _agent_cfg.get("custom_providers")
+        if isinstance(_custom_providers, list):
+            for _cp_entry in _custom_providers:
+                if not isinstance(_cp_entry, dict):
+                    continue
+                _cp_url = (_cp_entry.get("base_url") or "").rstrip("/")
+                if not _cp_url:
+                    continue
+                _cp_models = _cp_entry.get("models", {})
+                if not isinstance(_cp_models, dict):
+                    continue
+                for _cp_model_name, _cp_model_cfg in _cp_models.items():
+                    if not isinstance(_cp_model_cfg, dict):
                         continue
-                    _cp_url = (_cp_entry.get("base_url") or "").rstrip("/")
-                    if _cp_url and _cp_url == self.base_url.rstrip("/"):
-                        _cp_models = _cp_entry.get("models", {})
-                        if isinstance(_cp_models, dict):
-                            _cp_model_cfg = _cp_models.get(self.model, {})
-                            if isinstance(_cp_model_cfg, dict):
-                                _cp_ctx = _cp_model_cfg.get("context_length")
-                                if _cp_ctx is not None:
-                                    try:
-                                        _config_context_length = int(_cp_ctx)
-                                    except (TypeError, ValueError):
-                                        pass
-                        break
+                    _cp_ctx = _cp_model_cfg.get("context_length")
+                    if _cp_ctx is None:
+                        continue
+                    try:
+                        self._custom_provider_context_lengths[(_cp_url, _cp_model_name)] = int(_cp_ctx)
+                    except (TypeError, ValueError):
+                        continue
+        if _config_context_length is None:
+            _config_context_length = self._custom_provider_context_lengths.get(
+                (self.base_url.rstrip("/"), self.model)
+            )
         
         # Select context engine: config-driven (like memory providers).
         # 1. Check config.yaml context.engine setting
@@ -1474,6 +1485,35 @@ class AIAgent:
         # Context engine reset (works for both built-in compressor and plugins)
         if hasattr(self, "context_compressor") and self.context_compressor:
             self.context_compressor.on_session_reset()
+
+    def _resolve_config_context_length_for_model(
+        self,
+        model: str,
+        *,
+        base_url: str = "",
+        provider: str = "",
+    ) -> int | None:
+        """Return the configured context-length override for a specific runtime."""
+        normalized_model = model or ""
+        normalized_base_url = (base_url or "").rstrip("/")
+        normalized_provider = (provider or "").strip().lower()
+
+        default_model = getattr(self, "_default_model", None)
+        default_base_url = getattr(self, "_default_base_url", "") or ""
+        default_provider = (getattr(self, "_default_provider", "") or "").strip().lower()
+        default_override = getattr(self, "_config_context_length", None)
+
+        if default_override is not None:
+            model_matches = not default_model or normalized_model == default_model
+            base_matches = not default_base_url or not normalized_base_url or normalized_base_url == default_base_url
+            provider_matches = not default_provider or not normalized_provider or normalized_provider == default_provider
+            if model_matches and base_matches and provider_matches:
+                return default_override
+
+        custom_overrides = getattr(self, "_custom_provider_context_lengths", None) or {}
+        if normalized_base_url:
+            return custom_overrides.get((normalized_base_url, normalized_model))
+        return None
     
     def switch_model(self, new_model, new_provider, api_key='', base_url='', api_mode=''):
         """Switch the model/provider in-place for a live agent.
@@ -1551,12 +1591,17 @@ class AIAgent:
         # ── Update context compressor ──
         if hasattr(self, "context_compressor") and self.context_compressor:
             from agent.model_metadata import get_model_context_length
+            config_context_length = self._resolve_config_context_length_for_model(
+                self.model,
+                base_url=self.base_url,
+                provider=self.provider,
+            )
             new_context_length = get_model_context_length(
                 self.model,
                 base_url=self.base_url,
                 api_key=self.api_key,
                 provider=self.provider,
-                config_context_length=getattr(self, "_config_context_length", None),
+                config_context_length=config_context_length,
             )
             self.context_compressor.update_model(
                 model=self.model,
@@ -1748,10 +1793,18 @@ class AIAgent:
 
             aux_base_url = str(getattr(client, "base_url", ""))
             aux_api_key = str(getattr(client, "api_key", ""))
+            aux_provider = self.provider if aux_base_url.rstrip("/") == (self.base_url or "").rstrip("/") else ""
+            aux_config_context_length = self._resolve_config_context_length_for_model(
+                aux_model,
+                base_url=aux_base_url,
+                provider=aux_provider,
+            )
             aux_context = get_model_context_length(
                 aux_model,
                 base_url=aux_base_url,
                 api_key=aux_api_key,
+                config_context_length=aux_config_context_length,
+                provider=aux_provider,
             )
 
             threshold = self.context_compressor.threshold_tokens
@@ -5516,9 +5569,15 @@ class AIAgent:
             # causing oversized sessions to overflow the fallback.
             if hasattr(self, 'context_compressor') and self.context_compressor:
                 from agent.model_metadata import get_model_context_length
+                fb_config_context_length = self._resolve_config_context_length_for_model(
+                    self.model,
+                    base_url=self.base_url,
+                    provider=self.provider,
+                )
                 fb_context_length = get_model_context_length(
                     self.model, base_url=self.base_url,
                     api_key=self.api_key, provider=self.provider,
+                    config_context_length=fb_config_context_length,
                 )
                 self.context_compressor.update_model(
                     model=self.model,
