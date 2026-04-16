@@ -1708,6 +1708,34 @@ class TestProgressMessageThread:
         )
 
     @pytest.mark.asyncio
+    async def test_dm_toplevel_can_use_message_ts_as_session_thread_when_enabled(self, adapter):
+        """Opt-in mode should isolate top-level Slack DM reply threads as sessions."""
+        adapter.config.extra["dm_top_level_threads_as_sessions"] = True
+
+        event = {
+            "channel": "D_DM",
+            "channel_type": "im",
+            "user": "U_USER",
+            "text": "Hello bot",
+            "ts": "1234567890.000001",
+        }
+
+        captured_events = []
+        adapter.handle_message = AsyncMock(side_effect=lambda e: captured_events.append(e))
+
+        with patch.object(adapter, "_resolve_user_name", new=AsyncMock(return_value="testuser")):
+            await adapter._handle_slack_message(event)
+
+        assert len(captured_events) == 1
+        msg_event = captured_events[0]
+        source = msg_event.source
+
+        assert source.thread_id == "1234567890.000001", (
+            "source.thread_id should fall back to the message ts when "
+            "dm_top_level_threads_as_sessions is enabled"
+        )
+
+    @pytest.mark.asyncio
     async def test_channel_mention_progress_uses_thread_ts(self, adapter):
         """Progress messages for a channel @mention should go into the reply thread."""
         # Simulate an @mention in a channel: the event ts becomes the thread anchor

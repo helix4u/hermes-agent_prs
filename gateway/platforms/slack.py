@@ -366,6 +366,20 @@ class SlackAdapter(BasePlatformAdapter):
             # in an assistant-enabled context. Falls back to reactions.
             logger.debug("[Slack] assistant.threads.setStatus failed: %s", e)
 
+    def _dm_top_level_threads_as_sessions_enabled(self) -> bool:
+        """Whether top-level Slack DMs should get per-message session threads.
+
+        Default behavior is backward-compatible: top-level DM messages share one
+        continuous session, even though Hermes replies under each message in a
+        visual Slack thread. When this flag is enabled, a top-level DM message's
+        own ``ts`` becomes the session thread id so each visual reply thread is
+        isolated as its own Hermes session.
+        """
+        raw = self.config.extra.get("dm_top_level_threads_as_sessions")
+        if raw is None:
+            raw = os.getenv("SLACK_DM_TOP_LEVEL_THREADS_AS_SESSIONS", "")
+        return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
     def _resolve_thread_ts(
         self,
         reply_to: Optional[str] = None,
@@ -996,10 +1010,14 @@ class SlackAdapter(BasePlatformAdapter):
         # Build thread_ts for session keying.
         # In channels: fall back to ts so each top-level @mention starts a
         #   new thread/session (the bot always replies in a thread).
-        # In DMs: only use the real thread_ts — top-level DMs should share
-        #   one continuous session, threaded DMs get their own session.
+        # In DMs: by default only use the real thread_ts so top-level DMs
+        #   share one continuous session. When dm_top_level_threads_as_sessions
+        #   is enabled, fall back to ts so each top-level DM reply thread gets
+        #   its own session key as well.
         if is_dm:
-            thread_ts = event.get("thread_ts") or assistant_meta.get("thread_ts")  # None for top-level DMs
+            thread_ts = event.get("thread_ts") or assistant_meta.get("thread_ts")
+            if not thread_ts and self._dm_top_level_threads_as_sessions_enabled():
+                thread_ts = ts
         else:
             thread_ts = event.get("thread_ts") or ts  # ts fallback for channels
 
