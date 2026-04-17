@@ -332,6 +332,37 @@ class TestExpiredCodexFallback:
             # OpenRouter is 1st in chain, should win
             mock_openai.assert_called()
 
+    def test_aggregator_main_provider_uses_main_model_before_fallback_chain(self):
+        """Auto auxiliary should follow the active main provider/model first, even for aggregators."""
+        mock_client = MagicMock()
+
+        with patch("agent.auxiliary_client.resolve_provider_client",
+                   return_value=(mock_client, "xiaomi/mimo-v2-pro")) as mock_rpc, \
+             patch("agent.auxiliary_client._try_openrouter", side_effect=AssertionError("fallback chain should not run")), \
+             patch("agent.auxiliary_client._read_main_provider", return_value="nous"), \
+             patch("agent.auxiliary_client._read_main_model", return_value="xiaomi/mimo-v2-pro"):
+            client, model = _resolve_auto()
+
+        assert client is mock_client
+        assert model == "xiaomi/mimo-v2-pro"
+        mock_rpc.assert_called_once_with("nous", "xiaomi/mimo-v2-pro", explicit_base_url=None, explicit_api_key=None, api_mode=None)
+
+    def test_openrouter_env_does_not_hijack_nous_main_provider(self, monkeypatch):
+        """A stray OPENROUTER_API_KEY should not override a Nous main model for auxiliary auto."""
+        mock_client = MagicMock()
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+
+        with patch("agent.auxiliary_client.resolve_provider_client",
+                   return_value=(mock_client, "xiaomi/mimo-v2-pro")) as mock_rpc, \
+             patch("agent.auxiliary_client._try_openrouter", side_effect=AssertionError("openrouter should not win before main provider")), \
+             patch("agent.auxiliary_client._read_main_provider", return_value="nous"), \
+             patch("agent.auxiliary_client._read_main_model", return_value="xiaomi/mimo-v2-pro"):
+            client, model = _resolve_auto()
+
+        assert client is mock_client
+        assert model == "xiaomi/mimo-v2-pro"
+        mock_rpc.assert_called_once_with("nous", "xiaomi/mimo-v2-pro", explicit_base_url=None, explicit_api_key=None, api_mode=None)
+
     def test_expired_codex_custom_endpoint_wins(self, tmp_path, monkeypatch):
         """With expired Codex + custom endpoint (Ollama), custom should win (3rd in chain)."""
         import base64

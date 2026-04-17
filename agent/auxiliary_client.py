@@ -1196,10 +1196,11 @@ def _resolve_auto(main_runtime: Optional[Dict[str, Any]] = None) -> Tuple[Option
     """Full auto-detection chain.
 
     Priority:
-      1. If the user's main provider is NOT an aggregator (OpenRouter / Nous),
-         use their main provider + main model directly.  This ensures users on
-         Alibaba, DeepSeek, ZAI, etc. get auxiliary tasks handled by the same
-         provider they already have credentials for — no OpenRouter key needed.
+      1. If the user already has an active main provider + main model, use that
+         provider/model directly for text-side auxiliary tasks. This keeps side
+         work aligned with the model the user actually selected instead of
+         silently hopping to a different provider/model just because another key
+         happens to be present in the environment.
       2. OpenRouter → Nous → custom → Codex → API-key providers (original chain).
     """
     global auxiliary_is_nous, _stale_base_url_warned
@@ -1230,12 +1231,10 @@ def _resolve_auto(main_runtime: Optional[Dict[str, Any]] = None) -> Tuple[Option
             )
             _stale_base_url_warned = True
 
-    # ── Step 1: non-aggregator main provider → use main model directly ──
+    # ── Step 1: main provider → use main model directly ─────────────────
     main_provider = runtime_provider or _read_main_provider()
     main_model = runtime_model or _read_main_model()
-    if (main_provider and main_model
-            and main_provider not in _AGGREGATOR_PROVIDERS
-            and main_provider not in ("auto", "")):
+    if main_provider and main_model and main_provider not in ("auto", ""):
         resolved_provider = main_provider
         explicit_base_url = None
         explicit_api_key = None
