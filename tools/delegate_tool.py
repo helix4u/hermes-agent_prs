@@ -19,6 +19,7 @@ never the child's intermediate tool calls or reasoning.
 import enum
 import json
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 import os
@@ -243,6 +244,35 @@ def _looks_like_error_output(content: str) -> bool:
         or first.startswith("failed:")
         or first.startswith("traceback ")
         or first.startswith("exception:")
+    )
+
+
+_UNVERIFIED_TOOL_TRANSCRIPT_PATTERN = re.compile(
+    r"(?:^|\s)(?:assistant\s+)?to=functions\.[A-Za-z_][\w.]*",
+    re.IGNORECASE,
+)
+
+
+def _summary_contains_unverified_tool_transcript(summary: str) -> bool:
+    """Detect model-written text that mimics raw structured tool calls.
+
+    A real subagent tool call should appear in ``messages[*].tool_calls`` and
+    therefore in ``tool_trace``.  When the final summary itself contains
+    Codex/OpenAI-style ``to=functions.foo`` snippets but no trace exists, the
+    parent cannot audit the claimed evidence.  Treat that as unsafe to pass
+    through as a normal delegated result.
+    """
+    if not summary:
+        return False
+    return bool(_UNVERIFIED_TOOL_TRANSCRIPT_PATTERN.search(summary))
+
+
+def _redact_unverified_tool_summary() -> str:
+    return (
+        "[UNVERIFIED DELEGATE SUMMARY: the child response contained text that "
+        "looked like raw tool-call output, but no structured tool_trace was "
+        "available. Treat this delegated result as unverified and rerun any "
+        "source-sensitive extraction directly.]"
     )
 
 
@@ -1508,6 +1538,15 @@ def _run_single_child(
                         # Fallback for messages without tool_call_id
                         tool_trace[-1].update(result_meta)
 
+        summary_warnings: List[str] = []
+        raw_summary_bytes: Optional[int] = None
+        if not tool_trace and _summary_contains_unverified_tool_transcript(summary):
+            raw_summary_bytes = len(summary.encode("utf-8", errors="replace"))
+            summary = _redact_unverified_tool_summary()
+            summary_warnings.append(
+                "child_summary_contained_tool_transcript_text_without_tool_trace"
+            )
+
         # Determine exit reason
         if interrupted:
             exit_reason = "interrupted"
@@ -1543,6 +1582,9 @@ def _run_single_child(
             # Stripped before the dict is serialised back to the model.
             "_child_role": getattr(child, "_delegate_role", None),
         }
+        if summary_warnings:
+            entry["warnings"] = summary_warnings
+            entry["raw_summary_bytes"] = raw_summary_bytes
         if status == "failed":
             entry["error"] = result.get("error", "Subagent did not produce a response.")
 
