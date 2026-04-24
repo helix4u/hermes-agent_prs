@@ -90,6 +90,14 @@ def test_load_busy_input_mode_prefers_env_then_config_then_default(tmp_path, mon
     )
     assert gateway_run.GatewayRunner._load_busy_input_mode() == "queue"
 
+    (tmp_path / "config.yaml").write_text(
+        "display:\n  busy_input_mode: ignore\n", encoding="utf-8"
+    )
+    assert gateway_run.GatewayRunner._load_busy_input_mode() == "ignore"
+
+    monkeypatch.setenv("HERMES_GATEWAY_BUSY_INPUT_MODE", "block")
+    assert gateway_run.GatewayRunner._load_busy_input_mode() == "block"
+
     monkeypatch.setenv("HERMES_GATEWAY_BUSY_INPUT_MODE", "interrupt")
     assert gateway_run.GatewayRunner._load_busy_input_mode() == "interrupt"
 

@@ -160,6 +160,48 @@ class TestBusySessionAck:
         assert "Interrupting" not in content
 
     @pytest.mark.asyncio
+    async def test_ignore_mode_suppresses_interrupt_queue_and_ack(self):
+        """When busy_input_mode is 'ignore', busy messages are silently dropped."""
+        runner, sentinel = _make_runner()
+        runner._busy_input_mode = "ignore"
+        adapter = _make_adapter()
+
+        event = _make_event(text="please stop posting")
+        sk = build_session_key(event.source)
+        runner.adapters[event.source.platform] = adapter
+
+        agent = MagicMock()
+        runner._running_agents[sk] = agent
+
+        result = await runner._handle_active_session_busy_message(event, sk)
+
+        assert result is True
+        agent.interrupt.assert_not_called()
+        adapter._send_with_retry.assert_not_called()
+        assert adapter._pending_messages == {}
+
+    @pytest.mark.asyncio
+    async def test_block_mode_suppresses_interrupt_queue_and_ack(self):
+        """Dashboard's 'block' spelling maps to the same silent drop behavior."""
+        runner, sentinel = _make_runner()
+        runner._busy_input_mode = "block"
+        adapter = _make_adapter()
+
+        event = _make_event(text="extra input")
+        sk = build_session_key(event.source)
+        runner.adapters[event.source.platform] = adapter
+
+        agent = MagicMock()
+        runner._running_agents[sk] = agent
+
+        result = await runner._handle_active_session_busy_message(event, sk)
+
+        assert result is True
+        agent.interrupt.assert_not_called()
+        adapter._send_with_retry.assert_not_called()
+        assert adapter._pending_messages == {}
+
+    @pytest.mark.asyncio
     async def test_debounce_suppresses_rapid_acks(self):
         """Second message within 30s should NOT send another ack."""
         runner, sentinel = _make_runner()

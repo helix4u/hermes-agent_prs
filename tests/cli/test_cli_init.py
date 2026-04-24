@@ -105,6 +105,14 @@ class TestBusyInputMode:
         cli = _make_cli(config_overrides={"display": {"busy_input_mode": "queue"}})
         assert cli.busy_input_mode == "queue"
 
+    def test_busy_input_mode_block_is_honored(self):
+        cli = _make_cli(config_overrides={"display": {"busy_input_mode": "block"}})
+        assert cli.busy_input_mode == "block"
+
+    def test_busy_input_mode_ignore_is_honored(self):
+        cli = _make_cli(config_overrides={"display": {"busy_input_mode": "ignore"}})
+        assert cli.busy_input_mode == "ignore"
+
     def test_unknown_busy_input_mode_falls_back_to_interrupt(self):
         cli = _make_cli(config_overrides={"display": {"busy_input_mode": "bogus"}})
         assert cli.busy_input_mode == "interrupt"
@@ -147,6 +155,20 @@ class TestBusyInputMode:
             cli._interrupt_queue.put(text)
         assert cli._interrupt_queue.get_nowait() == "redirect"
         assert cli._pending_input.empty()
+
+    def test_block_mode_drops_busy_enter(self):
+        """In block mode, Enter while busy does not queue or interrupt."""
+        cli = _make_cli(config_overrides={"display": {"busy_input_mode": "block"}})
+        cli._agent_running = True
+        text = "drop this"
+        if cli.busy_input_mode == "queue":
+            cli._pending_input.put(text)
+        elif cli.busy_input_mode in {"block", "ignore"}:
+            pass
+        else:
+            cli._interrupt_queue.put(text)
+        assert cli._pending_input.empty()
+        assert cli._interrupt_queue.empty()
 
 
 class TestSingleQueryState:

@@ -247,6 +247,28 @@ async def test_recent_telegram_text_followup_is_queued_without_interrupt():
 
 
 @pytest.mark.asyncio
+async def test_ignore_busy_input_mode_drops_running_agent_followup():
+    runner = _make_runner()
+    runner._busy_input_mode = "ignore"
+    event = _make_event(text="follow-up")
+    session_key = build_session_key(event.source)
+
+    fake_agent = MagicMock()
+    fake_agent.get_activity_summary.return_value = {"seconds_since_activity": 0}
+    runner._running_agents[session_key] = fake_agent
+
+    import time as _time
+    runner._running_agents_ts[session_key] = _time.time()
+
+    result = await runner._handle_message(event)
+
+    assert result is None
+    fake_agent.interrupt.assert_not_called()
+    adapter = runner.adapters[Platform.TELEGRAM]
+    assert session_key not in adapter._pending_messages
+
+
+@pytest.mark.asyncio
 async def test_recent_telegram_followups_append_in_pending_queue():
     runner = _make_runner()
     first = _make_event(text="part one")

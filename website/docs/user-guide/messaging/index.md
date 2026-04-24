@@ -212,12 +212,15 @@ Pairing codes expire after 1 hour, are rate-limited, and use cryptographic rando
 
 ## Interrupting the Agent
 
-Send any message while the agent is working to interrupt it. Key behaviors:
+By default, sending any message while the agent is working interrupts it. Set `display.busy_input_mode` in `~/.hermes/config.yaml` to change that behavior:
 
-- **In-progress terminal commands are killed immediately** (SIGTERM, then SIGKILL after 1s)
-- **Tool calls are cancelled** — only the currently-executing one runs, the rest are skipped
-- **Multiple messages are combined** — messages sent during interruption are joined into one prompt
-- **`/stop` command** — interrupts without queuing a follow-up message
+| Mode | Behavior |
+|------|----------|
+| `"interrupt"` (default) | New messages interrupt the current operation and are processed immediately |
+| `"queue"` | New messages are queued and sent as the next turn after the agent finishes |
+| `"block"` / `"ignore"` | New messages are silently ignored while the agent is busy |
+
+`/stop` still interrupts without queuing a follow-up message.
 
 ## Tool Progress Notifications
 

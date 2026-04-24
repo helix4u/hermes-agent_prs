@@ -225,11 +225,12 @@ The `display.busy_input_mode` config key controls what happens when you press En
 |------|----------|
 | `"interrupt"` (default) | Your message interrupts the current operation and is processed immediately |
 | `"queue"` | Your message is silently queued and sent as the next turn after the agent finishes |
+| `"block"` / `"ignore"` | Your message is silently ignored while the agent is busy |
 
 ```yaml
 # ~/.hermes/config.yaml
 display:
-  busy_input_mode: "queue"   # or "interrupt" (default)
+  busy_input_mode: "queue"   # or "interrupt" (default), "block", "ignore"
 ```
 
 Queue mode is useful when you want to prepare follow-up messages without accidentally canceling in-flight work. Unknown values fall back to `"interrupt"`.

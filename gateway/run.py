@@ -1441,7 +1441,9 @@ class GatewayRunner:
                     mode = str(cfg.get("display", {}).get("busy_input_mode", "") or "").strip().lower()
             except Exception:
                 pass
-        return "queue" if mode == "queue" else "interrupt"
+        if mode in {"interrupt", "queue", "block", "ignore"}:
+            return mode
+        return "interrupt"
 
     @staticmethod
     def _load_restart_drain_timeout() -> float:
@@ -1575,6 +1577,14 @@ class GatewayRunner:
             return True
 
         # Normal busy case (agent actively running a task)
+        if self._busy_input_mode in {"block", "ignore"}:
+            logger.debug(
+                "Ignoring busy input for session %s because busy_input_mode=%s",
+                session_key[:20],
+                self._busy_input_mode,
+            )
+            return True
+
         adapter = self.adapters.get(event.source.platform)
         if not adapter:
             return False  # let default path handle it
@@ -3530,6 +3540,14 @@ class GatewayRunner:
                     f"⏳ Agent is running — `/{_cmd_def_inner.name}` can't run "
                     f"mid-turn. Wait for the current response or `/stop` first."
                 )
+
+            if self._busy_input_mode in {"block", "ignore"}:
+                logger.debug(
+                    "Ignoring busy input for session %s because busy_input_mode=%s",
+                    _quick_key[:20],
+                    self._busy_input_mode,
+                )
+                return None
 
             if event.message_type == MessageType.PHOTO:
                 logger.debug("PRIORITY photo follow-up for session %s — queueing without interrupt", _quick_key[:20])
