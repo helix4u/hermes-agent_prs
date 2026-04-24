@@ -614,17 +614,30 @@ class SupermemoryMemoryProvider(MemoryProvider):
         except Exception:
             logger.warning("Supermemory session ingest failed", exc_info=True)
 
-    def on_memory_write(self, action: str, target: str, content: str) -> None:
+    def on_memory_write(
+        self,
+        action: str,
+        target: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
         if not self._active or not self._write_enabled or not self._client:
             return
         if action != "add" or not (content or "").strip():
             return
+        write_metadata = {
+            "source": "hermes_memory",
+            "target": target,
+            "type": "explicit_memory",
+        }
+        if metadata:
+            write_metadata.update(metadata)
 
         def _run():
             try:
                 self._client.add_memory(
                     content.strip(),
-                    metadata={"source": "hermes_memory", "target": target, "type": "explicit_memory"},
+                    metadata=write_metadata,
                     entity_context=self._entity_context,
                 )
             except Exception:

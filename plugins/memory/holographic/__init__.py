@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from agent.memory_provider import MemoryProvider
 from tools.registry import tool_error
@@ -240,7 +240,13 @@ class HolographicMemoryProvider(MemoryProvider):
             return
         self._auto_extract_facts(messages)
 
-    def on_memory_write(self, action: str, target: str, content: str) -> None:
+    def on_memory_write(
+        self,
+        action: str,
+        target: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Mirror built-in memory writes as facts."""
         if action == "add" and self._store and content:
             try:
