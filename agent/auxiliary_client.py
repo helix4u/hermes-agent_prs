@@ -852,12 +852,14 @@ class CodexAuxiliaryClient:
 
     def __init__(self, real_client: OpenAI, model: str):
         self._real_client = real_client
+        self._closed = False
         adapter = _CodexCompletionsAdapter(real_client, model)
         self.chat = _CodexChatShim(adapter)
         self.api_key = real_client.api_key
         self.base_url = real_client.base_url
 
     def close(self):
+        self._closed = True
         self._real_client.close()
 
 
@@ -1974,13 +1976,7 @@ def _evict_cached_clients(provider: str) -> None:
         for key in stale_keys:
             client = _client_cache.get(key, (None, None, None))[0]
             if client is not None:
-                _force_close_async_httpx(client)
-                try:
-                    close_fn = getattr(client, "close", None)
-                    if callable(close_fn):
-                        close_fn()
-                except Exception:
-                    pass
+                _close_cached_auxiliary_client(client)
             _client_cache.pop(key, None)
 
 
@@ -3322,13 +3318,7 @@ def _store_cached_client(cache_key: tuple, client: Any, default_model: Optional[
     with _client_cache_lock:
         old_entry = _client_cache.get(cache_key)
         if old_entry is not None and old_entry[0] is not client:
-            _force_close_async_httpx(old_entry[0])
-            try:
-                close_fn = getattr(old_entry[0], "close", None)
-                if callable(close_fn):
-                    close_fn()
-            except Exception:
-                pass
+            _close_cached_auxiliary_client(old_entry[0])
         _client_cache[cache_key] = (client, default_model, bound_loop)
 
 
@@ -3427,6 +3417,71 @@ def _force_close_async_httpx(client: Any) -> None:
             inner._state = ClientState.CLOSED
     except Exception:
         pass
+
+
+def _closed_bool(obj: Any) -> Optional[bool]:
+    """Return a reliable closed-state boolean for SDK/httpx-like clients."""
+    for attr in ("_closed", "closed", "is_closed"):
+        try:
+            value = getattr(obj, attr, None)
+        except Exception:
+            continue
+        if callable(value):
+            try:
+                value = value()
+            except Exception:
+                continue
+        if isinstance(value, bool):
+            return value
+    return None
+
+
+def _is_auxiliary_client_closed(client: Any, *, _seen: Optional[set[int]] = None) -> bool:
+    """Best-effort liveness check for cached auxiliary clients.
+
+    Cached sync wrappers can outlive their underlying SDK transport.  This is
+    especially easy with Codex auxiliary clients: timeout handling may close
+    the wrapped OpenAI client to break a stuck Responses stream, while the
+    outer ``CodexAuxiliaryClient`` remains in the cache.  Treat any known
+    closed inner client as a poisoned cache entry and rebuild it on next use.
+    """
+    if client is None:
+        return True
+    if _seen is None:
+        _seen = set()
+    ident = id(client)
+    if ident in _seen:
+        return False
+    _seen.add(ident)
+
+    closed = _closed_bool(client)
+    if closed is True:
+        return True
+
+    obj_dict = getattr(client, "__dict__", {})
+    for attr in ("_real_client", "_client", "client"):
+        if isinstance(obj_dict, dict) and attr not in obj_dict:
+            continue
+        try:
+            inner = getattr(client, attr, None)
+        except Exception:
+            continue
+        if inner is None or inner is client:
+            continue
+        if _is_auxiliary_client_closed(inner, _seen=_seen):
+            return True
+    return False
+
+
+def _close_cached_auxiliary_client(client: Any) -> None:
+    """Best-effort close for evicted cached clients."""
+    _force_close_async_httpx(client)
+    close_fn = getattr(client, "close", None)
+    if callable(close_fn):
+        try:
+            close_fn()
+        except Exception:
+            pass
 
 
 def shutdown_cached_clients() -> None:
@@ -3549,7 +3604,12 @@ def _get_cached_client(
     with _client_cache_lock:
         if cache_key in _client_cache:
             cached_client, cached_default, cached_loop = _client_cache[cache_key]
-            if async_mode:
+            if _is_auxiliary_client_closed(cached_client):
+                # The cache can hold wrappers around SDK clients that were
+                # closed by a timeout path. Never return a poisoned transport.
+                _close_cached_auxiliary_client(cached_client)
+                _client_cache.pop(cache_key, None)
+            elif async_mode:
                 # Validate: the cached client must be bound to the CURRENT,
                 # OPEN loop.  If the loop changed or was closed, the httpx
                 # transport inside is dead — force-close and replace.
@@ -3562,7 +3622,7 @@ def _get_cached_client(
                     effective = _compat_model(cached_client, model, cached_default)
                     return cached_client, effective
                 # Stale — evict and fall through to create a new client.
-                _force_close_async_httpx(cached_client)
+                _close_cached_auxiliary_client(cached_client)
                 del _client_cache[cache_key]
             else:
                 effective = _compat_model(cached_client, model, cached_default)
@@ -3588,7 +3648,7 @@ def _get_cached_client(
                 # the oldest entries (FIFO — dict preserves insertion order).
                 while len(_client_cache) >= _CLIENT_CACHE_MAX_SIZE:
                     evict_key, evict_entry = next(iter(_client_cache.items()))
-                    _force_close_async_httpx(evict_entry[0])
+                    _close_cached_auxiliary_client(evict_entry[0])
                     del _client_cache[evict_key]
                 _client_cache[cache_key] = (client, default_model, bound_loop)
             else:

@@ -347,6 +347,46 @@ class TestBuildCodexClient:
         assert second_model == "gpt-5.4"
         assert mock_openai.call_count == 2
 
+    def test_cached_codex_client_rebuilds_when_underlying_client_is_closed(self):
+        import agent.auxiliary_client as aux
+
+        class _FakeRealClient:
+            def __init__(self):
+                self.api_key = "codex-token"
+                self.base_url = "https://chatgpt.com/backend-api/codex"
+                self._client = SimpleNamespace(is_closed=False)
+
+            def close(self):
+                self._client.is_closed = True
+
+        wrapper_a = aux.CodexAuxiliaryClient(_FakeRealClient(), "gpt-5.5")
+        wrapper_b = aux.CodexAuxiliaryClient(_FakeRealClient(), "gpt-5.5")
+
+        with (
+            patch("agent.auxiliary_client._pool_cache_hint", return_value=""),
+            patch(
+                "agent.auxiliary_client.resolve_provider_client",
+                side_effect=[(wrapper_a, "gpt-5.5"), (wrapper_b, "gpt-5.5")],
+            ) as mock_resolve,
+        ):
+            aux.shutdown_cached_clients()
+            try:
+                first_client, first_model = aux._get_cached_client("openai-codex", "gpt-5.5")
+                # Mirrors the Codex auxiliary timeout path: the timer closes
+                # the underlying OpenAI client, but the outer wrapper remains
+                # in the sync auxiliary cache.
+                wrapper_a._real_client.close()
+
+                second_client, second_model = aux._get_cached_client("openai-codex", "gpt-5.5")
+            finally:
+                aux.shutdown_cached_clients()
+
+        assert first_client is wrapper_a
+        assert second_client is wrapper_b
+        assert first_model == "gpt-5.5"
+        assert second_model == "gpt-5.5"
+        assert mock_resolve.call_count == 2
+
 
 class TestExpiredCodexFallback:
     """Test that expired Codex tokens don't block the auto chain."""
@@ -602,6 +642,8 @@ class TestGetTextAuxiliaryClient:
         with patch("agent.auxiliary_client._resolve_custom_runtime",
                    return_value=("https://api.openai.com/v1", "sk-test", "codex_responses")), \
              patch("agent.auxiliary_client._read_main_model", return_value="gpt-5.3-codex"), \
+             patch("agent.auxiliary_client._try_openrouter", return_value=(None, None)), \
+             patch("agent.auxiliary_client._try_nous", return_value=(None, None)), \
              patch("agent.auxiliary_client.OpenAI") as mock_openai:
             client, model = get_text_auxiliary_client()
 
